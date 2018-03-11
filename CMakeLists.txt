@@ -1,9 +1,11 @@
 cmake_minimum_required (VERSION 3.4)
+find_package(PkgConfig)
+pkg_check_modules(GST_VIDEO gstreamer-video-1.0 REQUIRED)
 
-find_package(gstreamer-video-1.0 REQUIRED)
+add_library(gstbreakout SHARED
+  src/main/c/gstbreakout.c)
 
-add_library(gstbreakout
-	MODULE gstbreakout.h
-               gstbreakout.c)
+target_include_directories(gstbreakout PRIVATE src/main/c PUBLIC ${GST_VIDEO_INCLUDE_DIRS})
+target_link_libraries(gstbreakout ${GST_VIDEO_LIBRARIES})
+target_compile_options(gstbreakout PUBLIC ${GST_VIDEO_CFLAGS_OTHER})
 
-target_link_libraries(gstbreakout)
