@@ -26,10 +26,15 @@
 G_BEGIN_DECLS
 
 #define GST_TYPE_BREAKOUT   (gst_breakout_get_type())
+// cast the given instance to a GstBreakout assuring type safety
 #define GST_BREAKOUT(obj)   (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_BREAKOUT,GstBreakout))
+// cast the given class to a GstBreakoutClass assuring type safety
 #define GST_BREAKOUT_CLASS(klass)   (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_BREAKOUT,GstBreakoutClass))
+// determine if the instance passed is a GstBreakout
 #define GST_IS_BREAKOUT(obj)   (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_BREAKOUT))
+// determine if the class passed is a GstBreakoutClass
 #define GST_IS_BREAKOUT_CLASS(klass)   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_BREAKOUT))
+// Get the class from the instance
 #define GST_BREAKOUT_GET_CLASS(obj) \
   (G_TYPE_INSTANCE_GET_CLASS((obj), GST_TYPE_BREAKOUT, GstBreakoutClass))
 
@@ -44,7 +49,6 @@ struct _GstBreakout
   GstVideoFrame* cur;
   GstCaps*       caps;
   GstPad*        sink;
-
 };
 
 struct _GstBreakoutClass
@@ -60,7 +64,11 @@ struct _GstBreakoutClass
 
 GType gst_breakout_get_type (void);
 
-GstSample* gst_breakout_pull_sample   (GstBreakout* breakout);
+// get data about the current frame.
+GstBuffer* gst_breakout_current_frame_buffer   (GstBreakout* breakout);
+guint32 gst_breakout_current_frame_width(GstBreakout* breakout);
+guint32 gst_breakout_current_frame_height(GstBreakout* breakout);
+GstCaps* gst_breakout_current_frame_caps(GstBreakout* breakout);
 
 //gboolean   gst_breakout_set_caps      (GstBaseTransform *trans,
 //    GstCaps *incaps,
