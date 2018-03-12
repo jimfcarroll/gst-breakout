@@ -39,7 +39,19 @@
 #include <gst/video/video-frame.h>
 #include <gst/video/gstvideofilter.h>
 #include "gstbreakout.h"
+
 #include <stdio.h>
+#include "gstbreakout-marshal.h"
+
+// This is index into the callback array
+enum
+{
+  /* signals */
+  SIGNAL_TRANSFORM_IP,
+
+  LAST_SIGNAL
+};
+
 
 GST_DEBUG_CATEGORY_STATIC (gst_breakout_debug_category);
 #define GST_CAT_DEFAULT gst_breakout_debug_category
@@ -62,6 +74,9 @@ static GstFlowReturn gst_breakout_transform_frame (GstVideoFilter * filter,
 static GstFlowReturn gst_breakout_transform_frame_ip (GstVideoFilter * filter,
     GstVideoFrame * frame);
 
+static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
+                                        GstBuffer *input, GstBuffer **outbuf);
+
 enum
 {
   PROP_0
@@ -69,20 +84,21 @@ enum
 
 /* pad templates */
 
-/* FIXME: add/remove formats you can handle */
 #define VIDEO_SRC_CAPS \
-    GST_VIDEO_CAPS_MAKE("{ BGR }")
+    GST_VIDEO_CAPS_MAKE(GST_VIDEO_FORMATS_ALL)
 
-/* FIXME: add/remove formats you can handle */
 #define VIDEO_SINK_CAPS \
-    GST_VIDEO_CAPS_MAKE("{ BGR }")
+    GST_VIDEO_CAPS_MAKE(GST_VIDEO_FORMATS_ALL)
 
+static guint gst_breakout_signals[LAST_SIGNAL] = { 0 };
 
 /* class initialization */
 
 G_DEFINE_TYPE_WITH_CODE (GstBreakout, gst_breakout, GST_TYPE_VIDEO_FILTER,
   GST_DEBUG_CATEGORY_INIT (gst_breakout_debug_category, "breakout", 0,
   "debug category for breakout element"));
+
+GstSegment defaultSegment;
 
 static void
 gst_breakout_class_init (GstBreakoutClass * klass)
@@ -108,17 +124,51 @@ gst_breakout_class_init (GstBreakoutClass * klass)
   gobject_class->get_property = gst_breakout_get_property;
   gobject_class->dispose = gst_breakout_dispose;
   gobject_class->finalize = gst_breakout_finalize;
+
+  base_transform_class->prepare_output_buffer = gst_breakout_prepare_output_buffer;
+
   base_transform_class->start = GST_DEBUG_FUNCPTR (gst_breakout_start);
+//  klass->parent_set_caps = GST_DEBUG_FUNCPTR(base_transform_class->set_caps);
   base_transform_class->stop = GST_DEBUG_FUNCPTR (gst_breakout_stop);
+//  base_transform_class->set_caps = GST_DEBUG_FUNCPTR(gst_breakout_set_caps);
+
   video_filter_class->set_info = GST_DEBUG_FUNCPTR (gst_breakout_set_info);
 //  video_filter_class->transform_frame = GST_DEBUG_FUNCPTR (gst_breakout_transform_frame);
   video_filter_class->transform_frame_ip = GST_DEBUG_FUNCPTR (gst_breakout_transform_frame_ip);
 
+  gst_breakout_signals[SIGNAL_TRANSFORM_IP] =
+      g_signal_new ("new_sample", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+      G_STRUCT_OFFSET (GstBreakoutClass, new_sample),
+      NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0, G_TYPE_NONE);
+
+  gst_segment_init (&defaultSegment, GST_FORMAT_TIME);
 }
 
 static void
 gst_breakout_init (GstBreakout *breakout)
 {
+  breakout->cur = NULL;
+  breakout->caps = NULL;
+
+  GstIterator* it = gst_element_iterate_sink_pads(&(breakout->base_breakout.element.element));
+  GstIteratorResult result = GST_ITERATOR_OK;
+  GstPad* pad = NULL;
+  GValue p = G_VALUE_INIT;
+  while (result == GST_ITERATOR_OK && pad == NULL) {
+    result = gst_iterator_next(it, &p);
+    pad = GST_PAD(p.data[0].v_pointer);
+  }
+  gst_iterator_free(it);
+  if (pad != NULL) {
+    breakout->sink = pad;
+    gst_object_ref(breakout->sink);
+  } else {
+    breakout->sink = NULL;
+  }
+
+  gst_base_transform_set_in_place(&(breakout->base_breakout.element), TRUE);
+
+  GST_DEBUG_OBJECT (breakout->sink, " PADDY!");
 }
 
 void
@@ -159,6 +209,10 @@ gst_breakout_dispose (GObject * object)
   GST_DEBUG_OBJECT (breakout, "dispose");
 
   /* clean up as possible.  may be called multiple times */
+  if (breakout->sink != NULL) {
+    gst_object_unref(breakout->sink);
+    breakout->sink = NULL;
+  }
 
   G_OBJECT_CLASS (gst_breakout_parent_class)->dispose (object);
 }
@@ -222,19 +276,97 @@ static GstFlowReturn
 gst_breakout_transform_frame_ip (GstVideoFilter * filter, GstVideoFrame * frame)
 {
   GstBreakout *breakout = GST_BREAKOUT (filter);
-
-  guint8* src = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
-  printf("width: %d, height: %d\n", (int)frame->info.width, (int) frame->info.height);
-
   GST_DEBUG_OBJECT (breakout, "transform_frame_ip");
+
+//  guint8* src = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
+//  printf("width: %d, height: %d\n", GST_VIDEO_FRAME_WIDTH(frame), GST_VIDEO_FRAME_HEIGHT(frame));
+
+  breakout->cur = frame;
+  g_signal_emit (breakout, gst_breakout_signals[SIGNAL_TRANSFORM_IP], 0);
+  breakout->cur = NULL;
 
   return GST_FLOW_OK;
 }
 
+/**
+ * gst_app_sink_pull_sample:
+ * @appsink: a #GstAppSink
+ *
+ * This function blocks until a sample or EOS becomes available or the appsink
+ * element is set to the READY/NULL state.
+ *
+ * This function will only return samples when the appsink is in the PLAYING
+ * state. All rendered buffers will be put in a queue so that the application
+ * can pull samples at its own rate. Note that when the application does not
+ * pull samples fast enough, the queued buffers could consume a lot of memory,
+ * especially when dealing with raw video frames.
+ *
+ * If an EOS event was received before any buffers, this function returns
+ * %NULL. Use gst_app_sink_is_eos () to check for the EOS condition.
+ *
+ * Returns: (transfer full): a #GstSample or NULL when the appsink is stopped or EOS.
+ *          Call gst_sample_unref() after usage.
+ */
+
+GstSample *
+gst_breakout_pull_sample (GstBreakout * breakout)
+{
+  GstSample *sample = NULL;
+  GstBuffer *buffer;
+  GstVideoFrame* current;
+
+  current = breakout->cur;
+  if (current == NULL)
+    goto nothing;
+  buffer = current->buffer;
+  GST_DEBUG_OBJECT (breakout, "we have a buffer %p with a ref count %d", buffer, (int)buffer->mini_object.refcount);
+  GstCaps* caps = breakout->caps;
+  gboolean needsUnref = FALSE;
+  if (breakout->sink != NULL) {
+    caps = gst_pad_get_current_caps(breakout->sink);
+    needsUnref = TRUE;
+  }
+  sample = gst_sample_new (buffer, caps , &defaultSegment, NULL);
+  if (needsUnref)
+    gst_caps_unref(caps);
+
+  return sample;
+
+  /* special conditions */
+nothing:
+  {
+    GST_DEBUG_OBJECT (breakout, "there is no buffer at this point. The method should be called from within a callback. Return NULL");
+    return NULL;
+  }
+}
+
+static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
+                                        GstBuffer *input, GstBuffer **output) {
+  if (gst_buffer_is_writable(input)) {
+    *output = input;
+    gst_buffer_ref(*output);
+  } else {
+    *output = gst_buffer_make_writable(gst_buffer_copy_deep(input));
+  }
+  printf("ref count %d, in=%p out=%p\n", (int)((*output)->mini_object.refcount), input, *output);
+  return GST_FLOW_OK;
+}
+
+
+//gboolean gst_breakout_set_caps  (GstBaseTransform *trans, GstCaps *incaps,
+//    GstCaps *outcaps) {
+//  GST_TRACE_OBJECT(trans, "setting caps to in=\"%" GST_PTR_FORMAT "\", out=\"%" GST_PTR_FORMAT "\"", incaps, outcaps);
+//  GstBreakout *breakout = GST_BREAKOUT (trans);
+//  GstBreakoutClass* klass = GST_BREAKOUT_GET_CLASS(trans);
+//  if (!breakout->caps)
+//    gst_caps_replace (&breakout->caps, incaps);
+//  return klass->parent_set_caps (trans, incaps, outcaps);
+//  return TRUE;
+//}
+
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-
   /* FIXME Remember to set the rank if it's an element that is meant
      to be autoplugged by decodebin. */
   return gst_element_register (plugin, "breakout", GST_RANK_NONE,
