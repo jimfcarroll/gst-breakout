@@ -47,7 +47,6 @@ struct _GstBreakout
   GstVideoFilter base_breakout;
 
   GstVideoFrame* cur;
-  GstCaps*       caps;
   GstPad*        sink;
 };
 
@@ -56,23 +55,21 @@ struct _GstBreakoutClass
   GstVideoFilterClass base_breakout_class;
 
   /* signals */
-  void          (*new_sample)                   (GstBreakout *breakout);
+  void          (*new_sample)        (GstBreakout *breakout);
 
-//  gboolean      (*parent_set_caps)  (GstBaseTransform *trans, GstCaps *incaps, GstCaps *outcaps);
-  GstSample *   (*pull_sample)       (GstBreakout *breakout);
+  /* actions */
+  GstSample*    (*pull_sample)       (GstBreakout *breakout);
+
+  /* eventually private */
 };
 
 GType gst_breakout_get_type (void);
 
 // get data about the current frame.
-GstBuffer* gst_breakout_current_frame_buffer   (GstBreakout* breakout);
-guint32 gst_breakout_current_frame_width(GstBreakout* breakout);
-guint32 gst_breakout_current_frame_height(GstBreakout* breakout);
-GstCaps* gst_breakout_current_frame_caps(GstBreakout* breakout);
-
-//gboolean   gst_breakout_set_caps      (GstBaseTransform *trans,
-//    GstCaps *incaps,
-//    GstCaps *outcaps);
+GstBuffer* gst_breakout_current_frame_buffer (GstBreakout* breakout);
+guint32 gst_breakout_current_frame_width     (GstBreakout* breakout);
+guint32 gst_breakout_current_frame_height    (GstBreakout* breakout);
+GstCaps* gst_breakout_current_frame_caps     (GstBreakout* breakout);
 
 G_END_DECLS
 

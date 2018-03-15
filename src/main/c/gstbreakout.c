@@ -73,12 +73,22 @@ static gboolean gst_breakout_set_info (GstVideoFilter * filter, GstCaps * incaps
 static GstFlowReturn gst_breakout_transform_frame_ip (GstVideoFilter * filter,
     GstVideoFrame * frame);
 
-static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
-                                        GstBuffer *input, GstBuffer **outbuf);
+//static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
+//    GstBuffer *input, GstBuffer **outbuf);
+
+// exposed to java
+typedef struct {
+  GstBuffer* buffer;
+  GstCaps* caps;
+  guint32 width;
+  guint32 height;
+} FrameDetails;
+
+void gst_breakout_current_frame_details(GstBreakout* breakout, FrameDetails* details);
 
 enum
 {
-  PROP_0
+  PROP_0,
 };
 
 /* pad templates */
@@ -94,8 +104,8 @@ static guint gst_breakout_signals[LAST_SIGNAL] = { 0 };
 /* class initialization */
 
 G_DEFINE_TYPE_WITH_CODE (GstBreakout, gst_breakout, GST_TYPE_VIDEO_FILTER,
-  GST_DEBUG_CATEGORY_INIT (gst_breakout_debug_category, "breakout", 0,
-  "debug category for breakout element"));
+    GST_DEBUG_CATEGORY_INIT (gst_breakout_debug_category, "breakout", 0,
+        "debug category for breakout element"));
 
 GstSegment defaultSegment;
 
@@ -110,25 +120,22 @@ gst_breakout_class_init (GstBreakoutClass * klass)
      base_class_init if you intend to subclass this class. */
   gst_element_class_add_pad_template (GST_ELEMENT_CLASS(klass),
       gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
-        gst_caps_from_string (VIDEO_SRC_CAPS)));
+          gst_caps_from_string (VIDEO_SRC_CAPS)));
   gst_element_class_add_pad_template (GST_ELEMENT_CLASS(klass),
       gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
-        gst_caps_from_string (VIDEO_SINK_CAPS)));
+          gst_caps_from_string (VIDEO_SINK_CAPS)));
 
   gst_element_class_set_static_metadata (GST_ELEMENT_CLASS(klass),
-      "FIXME Long name", "Generic", "FIXME Description",
-      "FIXME <fixme@example.com>");
+      "Breakout", "Generic", "Allow other programming languages to provide video filter functionality.",
+      "Jim Carroll");
 
   gobject_class->set_property = gst_breakout_set_property;
   gobject_class->get_property = gst_breakout_get_property;
   gobject_class->dispose = gst_breakout_dispose;
   gobject_class->finalize = gst_breakout_finalize;
 
-  base_transform_class->prepare_output_buffer = gst_breakout_prepare_output_buffer;
-
-  // I will likely be putting back the setCaps call
-  //  klass->parent_set_caps = GST_DEBUG_FUNCPTR(base_transform_class->set_caps);
-  //  base_transform_class->set_caps = GST_DEBUG_FUNCPTR(gst_breakout_set_caps);
+  // This shouldn't be needed when the always_in_place is TRUE
+  //base_transform_class->prepare_output_buffer = gst_breakout_prepare_output_buffer;
 
   base_transform_class->start = GST_DEBUG_FUNCPTR (gst_breakout_start);
   base_transform_class->stop = GST_DEBUG_FUNCPTR (gst_breakout_stop);
@@ -140,14 +147,13 @@ gst_breakout_class_init (GstBreakoutClass * klass)
 
   gst_breakout_signals[SIGNAL_TRANSFORM_IP] =
       g_signal_new ("new_sample", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-      G_STRUCT_OFFSET (GstBreakoutClass, new_sample),
-      NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0, G_TYPE_NONE);
+          G_STRUCT_OFFSET (GstBreakoutClass, new_sample),
+          NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0, G_TYPE_NONE);
 
   gst_segment_init (&defaultSegment, GST_FORMAT_TIME);
 }
 
-static void
-gst_breakout_init (GstBreakout *breakout)
+static void gst_breakout_init (GstBreakout *breakout)
 {
   GstIterator* it = gst_element_iterate_sink_pads(&(breakout->base_breakout.element.element));
   GstIteratorResult result = GST_ITERATOR_OK;
@@ -155,7 +161,6 @@ gst_breakout_init (GstBreakout *breakout)
   GValue p = G_VALUE_INIT;
 
   breakout->cur = NULL;
-  breakout->caps = NULL;
 
   // =====================================================================
   // store off the sink pad for quick retrieval later. It's an ALWAYS pad
@@ -187,9 +192,9 @@ gst_breakout_set_property (GObject * object, guint property_id,
   GST_TRACE_OBJECT (breakout, "set_property");
 
   switch (property_id) {
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-      break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+    break;
   }
 }
 
@@ -201,9 +206,9 @@ gst_breakout_get_property (GObject * object, guint property_id,
   GST_TRACE_OBJECT (breakout, "get_property");
 
   switch (property_id) {
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-      break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+    break;
   }
 }
 
@@ -288,7 +293,7 @@ gst_breakout_current_frame_buffer (GstBreakout * breakout)
   return buffer;
 
   /* special conditions */
-nothing:
+  nothing:
   {
     GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
     return NULL;
@@ -305,10 +310,10 @@ guint32 gst_breakout_current_frame_width(GstBreakout* breakout) {
   return GST_VIDEO_FRAME_WIDTH(current);
 
   nothing:
-    {
-      GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
-      return -1;
-    }
+  {
+    GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
+    return -1;
+  }
 }
 
 guint32 gst_breakout_current_frame_height(GstBreakout* breakout) {
@@ -321,11 +326,12 @@ guint32 gst_breakout_current_frame_height(GstBreakout* breakout) {
   return GST_VIDEO_FRAME_HEIGHT(current);
 
   nothing:
-    {
-      GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
-      return -1;
-    }
+  {
+    GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
+    return -1;
+  }
 }
+
 GstCaps* gst_breakout_current_frame_caps(GstBreakout* breakout) {
   GstVideoFrame* current;
 
@@ -336,34 +342,39 @@ GstCaps* gst_breakout_current_frame_caps(GstBreakout* breakout) {
   return gst_video_info_to_caps(&(current->info));
 
   nothing:
-    {
-      GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
-      return NULL;
-    }
+  {
+    GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
+    return NULL;
+  }
+}
+
+void gst_breakout_current_frame_details(GstBreakout* breakout, FrameDetails* details) {
+  GstVideoFrame* current;
+
+  current = breakout->cur;
+  if (current == NULL)
+    goto nothing;
+
+  details->buffer = current->buffer;
+  details->caps = gst_video_info_to_caps(&(current->info));
+  details->width = GST_VIDEO_FRAME_WIDTH(current);
+  details->height = GST_VIDEO_FRAME_HEIGHT(current);
+
+  nothing:
+  {
+    GST_WARNING_OBJECT (breakout, "there is no frame at this point. The method should be called from within a callback. Return NULL");
+  }
 }
 
 
-static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
-                                        GstBuffer *input, GstBuffer **output) {
-  *output = gst_buffer_make_writable(input);
-  return GST_FLOW_OK;
-}
 
-
-//gboolean gst_breakout_set_caps  (GstBaseTransform *trans, GstCaps *incaps,
-//    GstCaps *outcaps) {
-//  GST_TRACE_OBJECT(trans, "setting caps to in=\"%" GST_PTR_FORMAT "\", out=\"%" GST_PTR_FORMAT "\"", incaps, outcaps);
-//  GstBreakout *breakout = GST_BREAKOUT (trans);
-//  GstBreakoutClass* klass = GST_BREAKOUT_GET_CLASS(trans);
-//  if (!breakout->caps)
-//    gst_caps_replace (&breakout->caps, incaps);
-//  return klass->parent_set_caps (trans, incaps, outcaps);
-//  return TRUE;
+//static GstFlowReturn gst_breakout_prepare_output_buffer (GstBaseTransform * trans,
+//    GstBuffer *input, GstBuffer **output) {
+//  *output = gst_buffer_make_writable(input);
+//  return GST_FLOW_OK;
 //}
 
-static gboolean
-plugin_init (GstPlugin * plugin)
-{
+static gboolean plugin_init (GstPlugin * plugin) {
   // Since this is not meant to be used from a decodebin the rank is NONE
   return gst_element_register (plugin, "breakout", GST_RANK_NONE,
       GST_TYPE_BREAKOUT);
