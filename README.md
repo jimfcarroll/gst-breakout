@@ -1,4 +1,4 @@
-# NOTE: This project was moved into the jimfcarroll/utilities project. It's not packaged up in a jar and used in the java side automatically.
+# NOTE: This project was moved into the jimfcarroll/utilities sub-project. It's now packaged up in a jar and used from the java side automatically.
 
 ## GStreamer plugin - Breakout
 
